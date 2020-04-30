@@ -1,21 +1,22 @@
 package improvecache;
 
 import improvecache.computable.Computable;
-import improvecache.computable.ExpensiveFunction;
 import improvecache.computable.MayFail;
 
 import java.util.Map;
 import java.util.concurrent.*;
 
 /**
- * @description：可能计算失败的结果
+ * @description：出于安全考虑 缓存需要设置有效期，到期自动失效
+ * 解决缓存的问题 设置随机的缓存时间
  */
-public class cache9<A, V> implements Computable<A, V> {
+public class cache11<A, V> implements Computable<A, V> {
 
     private final Map<A, Future<V>> cache = new ConcurrentHashMap<>();
     private final Computable<A, V> c;
+    public final static ScheduledExecutorService executor = Executors.newScheduledThreadPool(5);
 
-    public cache9(Computable<A, V> c) {
+    public cache11(Computable<A, V> c) {
         this.c = c;
     }
 
@@ -44,13 +45,13 @@ public class cache9<A, V> implements Computable<A, V> {
                  * 但如果是计算错误 在明确知道多尝试几次就可以得到答案的话应该重试，直到正确结果出现
                  */
                 return f.get();
-            }catch (CancellationException e){
+            } catch (CancellationException e) {
                 System.out.println("被取消了");
                 cache.remove(arg);
-                throw  e;
+                throw e;
             } catch (InterruptedException e) {
                 cache.remove(arg);
-                throw  e;
+                throw e;
             } catch (ExecutionException e) {
                 System.out.println("计算错误，需要重试");
                 cache.remove(arg);
@@ -58,13 +59,41 @@ public class cache9<A, V> implements Computable<A, V> {
         }
     }
 
+    public void shutDown() {
+        executor.shutdown();
+    }
+
+
+    public V compute(A arg, long expire) throws ExecutionException, InterruptedException {
+        if (expire > 0) {
+            executor.schedule(() -> {
+                expire(arg);
+            }, expire, TimeUnit.MILLISECONDS);
+        }
+        return compute(arg);
+    }
+
+    private synchronized void expire(A key) {
+        Future<V> future = cache.get(key);
+        if (future != null) {
+            if (future.isDone()) {
+                System.out.println("Future任务取消");
+                future.cancel(true);
+            }
+
+            System.out.println("过期时间到,缓存清除");
+            cache.remove(key);
+        }
+
+    }
+
     public static void main(String[] args) throws Exception {
-        cache9<String, Integer> computer = new cache9<>(new MayFail());
+        cache11<String, Integer> computer = new cache11<>(new MayFail());
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    Integer integer = computer.compute("666");
+                    Integer integer = computer.compute("666", 5000L);
                     System.out.println("第一个线程计算结果:" + integer);
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -100,6 +129,10 @@ public class cache9<A, V> implements Computable<A, V> {
 //        Thread.sleep(1000);
 //        computer.cache.get("666").cancel(true);
 
+        Thread.sleep(6000L);
+        Integer result = computer.compute("666");
+        System.out.println("第四次计算结果:" + result);
+        computer.shutDown();
     }
 
 }
